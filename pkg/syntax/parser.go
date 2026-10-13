@@ -86,7 +86,9 @@ func (p *Parser) peekIsAssign() bool {
 
 // skipNewlines consumes statement separators (newlines / semicolons).
 func (p *Parser) skipNewlines() {
-	for p.tok.Kind == Newline || p.tok.Kind == Semi {
+	// Stop on error too: next() refuses to advance once p.err is set, so
+	// looping here on a Newline/Semi token would spin forever.
+	for p.err == nil && (p.tok.Kind == Newline || p.tok.Kind == Semi) {
 		p.next()
 	}
 }
@@ -370,6 +372,8 @@ func (p *Parser) forCmd() *ForCmd {
 	for p.tok.Kind == WordTok && !p.isKeyword("do") {
 		c.In = append(c.In, p.word())
 	}
+	// A separator may sit between the `in` list and `do` (for i in a b; do ...).
+	p.skipNewlines()
 	if !p.expect("do") {
 		return nil
 	}
