@@ -23,6 +23,8 @@ const (
 	Or          // ||
 	Pipe        // |
 	PipeErr     // |&
+	Dsemi       // ;;
+	Bang        // !
 	LParen      // (
 	RParen      // )
 	LBrace      // {
@@ -79,6 +81,10 @@ func (k Kind) String() string {
 		return "Pipe"
 	case PipeErr:
 		return "PipeErr"
+	case Dsemi:
+		return "Dsemi"
+	case Bang:
+		return "Bang"
 	case LParen:
 		return "LParen"
 	case RParen:

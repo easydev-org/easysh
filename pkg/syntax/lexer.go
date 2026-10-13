@@ -162,6 +162,10 @@ func (l *Lexer) scanOpOrWord() (Token, error) {
 	two := func(s string) bool { return strings.HasPrefix(l.src[l.off:], s) }
 
 	switch {
+	case two(";;"):
+		l.advance()
+		l.advance()
+		return Token{Kind: Dsemi, Lit: ";;", Line: pos.Line, Col: pos.Col}, nil
 	case two("=>"):
 		l.advance()
 		l.advance()
@@ -223,8 +227,11 @@ func (l *Lexer) scanOpOrWord() (Token, error) {
 			l.advance()
 			if l.peekByte() == '-' {
 				l.advance()
+				return Token{Kind: RedirectTok, Lit: "2>&-", Line: pos.Line, Col: pos.Col}, nil
 			}
-			return Token{Kind: RedirectTok, Lit: ">&", Line: pos.Line, Col: pos.Col}, nil
+			// 2>&1 duplicates stderr onto the target fd; keep it distinct from
+			// >&1 so applyRedirect knows which fd is the source.
+			return Token{Kind: RedirectTok, Lit: "2>&", Line: pos.Line, Col: pos.Col}, nil
 		}
 		if l.peekByte() == '>' { // 2>>
 			l.advance()
@@ -237,6 +244,16 @@ func (l *Lexer) scanOpOrWord() (Token, error) {
 	case ';':
 		l.advance()
 		return Token{Kind: Semi, Lit: ";", Line: pos.Line, Col: pos.Col}, nil
+	case '!':
+		// `!` is the negation operator only when it stands alone (next char is
+		// whitespace/operator/EOF); `!=`/`!x` are ordinary word characters.
+		if c2 := l.peekAt(1); c2 != ' ' && c2 != '\t' && c2 != '\n' && c2 != 0 &&
+			c2 != ';' && c2 != '|' && c2 != '&' && c2 != '<' && c2 != '>' &&
+			c2 != '(' && c2 != ')' && c2 != '{' && c2 != '}' {
+			return l.scanWord()
+		}
+		l.advance()
+		return Token{Kind: Bang, Lit: "!", Line: pos.Line, Col: pos.Col}, nil
 	case '|':
 		l.advance()
 		return Token{Kind: Pipe, Lit: "|", Line: pos.Line, Col: pos.Col}, nil
@@ -353,6 +370,24 @@ func (l *Lexer) scanWord() (Token, error) {
 			if !l.eof() {
 				l.advance()
 			}
+			continue
+		}
+		if c == '`' {
+			// Backtick command substitution (POSIX): consume to the matching
+			// backtick, honouring backslash escapes.
+			l.advance()
+			for !l.eof() && l.peekByte() != '`' {
+				if l.peekByte() == '\\' {
+					l.advance()
+				}
+				if !l.eof() {
+					l.advance()
+				}
+			}
+			if l.eof() {
+				return Token{}, fmt.Errorf("line %d: unterminated backtick", pos.Line)
+			}
+			l.advance()
 			continue
 		}
 		if c == '{' || c == '}' {

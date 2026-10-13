@@ -25,8 +25,17 @@ func (r *Runner) runIf(ctx context.Context, c *syntax.IfCmd, st *state) int {
 // runFor iterates the `in` words, binding NAME each time.
 func (r *Runner) runFor(ctx context.Context, c *syntax.ForCmd, st *state) int {
 	code := 0
-	for iter, w := range c.In {
-		r.vars[c.Name] = r.expandOne(w, st)
+	// POSIX: the `in` list undergoes field splitting, so `for i in $(seq 1 3)`
+	// iterates 1,2,3. Collect the fields across all words first.
+	var items []string
+	for _, w := range c.In {
+		items = append(items, r.expandFields(w, st)...)
+	}
+	if len(items) == 0 {
+		items = r.args // `for x; do` (POSIX: iterate the positional params)
+	}
+	for iter, item := range items {
+		r.vars[c.Name] = item
 		r.iterStack = append(r.iterStack, iter+1)
 		code = r.runStmts(ctx, c.Body, st)
 		r.iterStack = r.iterStack[:len(r.iterStack)-1]
@@ -46,7 +55,13 @@ func (r *Runner) runFor(ctx context.Context, c *syntax.ForCmd, st *state) int {
 func (r *Runner) runWhile(ctx context.Context, c *syntax.WhileCmd, st *state) int {
 	code := 0
 	for i := 0; i < 1_000_000; i++ {
-		if r.runStmts(ctx, c.Cond, st) != 0 {
+		cond := r.runStmts(ctx, c.Cond, st)
+		// while loops while the condition succeeds; until loops while it fails.
+		if c.Until {
+			if cond == 0 {
+				break
+			}
+		} else if cond != 0 {
 			break
 		}
 		r.iterStack = append(r.iterStack, i+1)

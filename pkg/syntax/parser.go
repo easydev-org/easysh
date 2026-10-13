@@ -125,13 +125,27 @@ func (p *Parser) stmtList() []*Stmt {
 	return out
 }
 
+// atArgStop reports whether the current token ends a command's argument list.
+// Only easysh's own block keywords act as implicit separators; the bash
+// spellings (done/fi/esac) require a real `;`/newline, so `echo done` is fine.
+func (p *Parser) atArgStop() bool {
+	if p.tok.Kind != WordTok {
+		return false
+	}
+	switch p.tok.Lit {
+	case "then", "do", "elif", "else", "end":
+		return true
+	}
+	return false
+}
+
 // atTerminator reports whether the current token ends a block.
 func (p *Parser) atTerminator() bool {
 	if p.tok.Kind != WordTok {
 		return false
 	}
 	switch p.tok.Lit {
-	case "then", "do", "elif", "else", "end":
+	case "then", "do", "elif", "else", "end", "done", "fi", "esac":
 		return true
 	}
 	return false
@@ -143,6 +157,10 @@ func (p *Parser) atTerminator() bool {
 func (p *Parser) stmt() *Stmt {
 	pos := Pos{Line: p.tok.Line, Col: p.tok.Col}
 	st := &Stmt{At: pos}
+	if p.tok.Kind == Bang {
+		st.Bang = true
+		p.next()
+	}
 	first := p.pipeline()
 	if first == nil {
 		return nil
@@ -194,7 +212,7 @@ func (p *Parser) pipeline() *Pipeline {
 func (p *Parser) stage() *Stage {
 	st := &Stage{At: Pos{Line: p.tok.Line, Col: p.tok.Col}}
 
-	// Leading bindings: `let x = 1 cmd ...` (rare but legal) or a bare binding.
+	// Leading keyword bindings: `let x = 1 cmd ...` or a bare binding.
 	for p.tok.Kind == WordTok && p.isBindingKeyword() {
 		b := p.binding()
 		if b == nil {
@@ -203,15 +221,32 @@ func (p *Parser) stage() *Stage {
 		st.Bindings = append(st.Bindings, b)
 	}
 
-	// A bare assignment `name = value` (no keyword) mutates an existing `mut`.
+	// POSIX assignment prefixes: `name=value` (possibly several). Whether they
+	// persist or become a per-command environment depends on whether a command
+	// follows, so tag them "prefix" for now and settle below.
+	prefixes := 0
+	for p.tok.Kind == WordTok && isAssignWord(p.tok.Lit) {
+		st.Bindings = append(st.Bindings, p.assignWord())
+		prefixes++
+	}
+
+	// `name = value` (spaced, no keyword) mutates an existing `mut` — the
+	// easysh spelling kept for compatibility.
 	if p.tok.Kind == WordTok && isIdent(p.tok.Lit) && p.peekIsAssign() {
 		st.Bindings = append(st.Bindings, p.assign())
 	}
 
 	// A stage that is *only* bindings (no command word) is valid.
-	if p.tok.Kind == Newline || p.tok.Kind == Semi ||
-		p.tok.Kind == EOF || p.tok.Kind == RParen || p.atTerminator() {
+	if p.tok.Kind == Newline || p.tok.Kind == Semi || p.tok.Kind == Dsemi ||
+		p.tok.Kind == EOF || p.tok.Kind == RParen || p.tok.Kind == RBrace ||
+		p.atTerminator() {
 		if len(st.Bindings) > 0 {
+			// A lone `name=value` persists in the shell (POSIX assignment).
+			for _, b := range st.Bindings {
+				if b.Mode == "prefix" {
+					b.Mode = "assign"
+				}
+			}
 			return st
 		}
 		return nil
@@ -234,6 +269,37 @@ func (p *Parser) stage() *Stage {
 	return st
 }
 
+// isAssignWord reports whether a bare word is a POSIX assignment `name=...`
+// (the name must be a valid identifier; `a=b` yes, `a.b=c` no).
+func isAssignWord(lit string) bool {
+	i := strings.IndexByte(lit, '=')
+	if i <= 0 {
+		return false
+	}
+	return isIdent(lit[:i])
+}
+
+// assignWord parses `name=value` from the current Word token.
+func (p *Parser) assignWord() *Binding {
+	pos := Pos{Line: p.tok.Line, Col: p.tok.Col}
+	lit := p.tok.Lit
+	i := strings.IndexByte(lit, '=')
+	name, rest := lit[:i], lit[i+1:]
+	b := &Binding{At: pos, Mode: "prefix", Name: name}
+	p.next()
+	// The value may be glued into the same token (a=b) or be the following
+	// word(s) (a= b). Reconstruct a Word from the remainder + any following
+	// word tokens that belong to this assignment (no space before `=`).
+	if rest != "" {
+		b.Value = &Word{At: pos, Parts: splitParts(rest, pos)}
+	} else if p.tok.Kind == WordTok && !isAssignWord(p.tok.Lit) && !p.atTerminator() {
+		b.Value = p.word()
+	} else {
+		b.Value = &Word{At: pos, Parts: []WordPart{&Lit{At: pos, Value: "", Quoted: true}}}
+	}
+	return b
+}
+
 // ── bindings ────────────────────────────────────────────────────────────────
 
 func (p *Parser) isBindingKeyword() bool {
@@ -245,12 +311,23 @@ func (p *Parser) isBindingKeyword() bool {
 	return false
 }
 
-// binding parses `let x = word` / `mut x = word` / `export x = word`.
+// binding parses `let x = word` / `mut x = word` / `export x = word`, and the
+// POSIX glued form `export X=1` / `export PATH="$P"`.
 func (p *Parser) binding() *Binding {
 	mode := p.tok.Lit
 	pos := Pos{Line: p.tok.Line, Col: p.tok.Col}
 	p.next()
-	if p.tok.Kind != WordTok || !isIdent(p.tok.Lit) {
+	if p.tok.Kind != WordTok {
+		p.errf("%s: expected a name, got %s", mode, p.tok)
+		return nil
+	}
+	// Glued `name=value` (export X=1): the lexer kept it as one word.
+	if isAssignWord(p.tok.Lit) {
+		b := p.assignWord()
+		b.Mode = mode
+		return b
+	}
+	if !isIdent(p.tok.Lit) {
 		p.errf("%s: expected a name, got %s", mode, p.tok)
 		return nil
 	}
@@ -305,10 +382,16 @@ func (p *Parser) command() Node {
 			return p.forCmd()
 		case "while":
 			return p.whileCmd()
+		case "until":
+			return p.untilCmd()
 		case "case":
 			return p.caseCmd()
 		case "fn":
 			return p.funcDef()
+		}
+		// `f()` / `f ()` : a POSIX function definition.
+		if isIdent(p.tok.Lit) && p.peekIsLParenRParen() {
+			return p.bashFuncDef()
 		}
 	}
 	return p.simple()
@@ -322,7 +405,7 @@ func (p *Parser) simple() *Simple {
 	}
 	s := &Simple{At: Pos{Line: p.tok.Line, Col: p.tok.Col}}
 	s.Args = append(s.Args, p.word())
-	for p.tok.Kind == WordTok && !p.atTerminator() {
+	for p.tok.Kind == WordTok && !p.atArgStop() {
 		s.Args = append(s.Args, p.word())
 	}
 	return s
@@ -350,7 +433,7 @@ func (p *Parser) ifCmd() *IfCmd {
 		p.next()
 		c.Else = p.stmtList()
 	}
-	if !p.expect("end") {
+	if !p.expectEnd() {
 		return nil
 	}
 	return c
@@ -378,7 +461,7 @@ func (p *Parser) forCmd() *ForCmd {
 		return nil
 	}
 	c.Body = p.stmtList()
-	if !p.expect("end") {
+	if !p.expectEnd() {
 		return nil
 	}
 	return c
@@ -393,13 +476,15 @@ func (p *Parser) whileCmd() *WhileCmd {
 		return nil
 	}
 	c.Body = p.stmtList()
-	if !p.expect("end") {
+	if !p.expectEnd() {
 		return nil
 	}
 	return c
 }
 
-// caseCmd parses `case word in pat => body ... end`.
+// caseCmd parses `case word in pat => body ... end`, and also the POSIX form
+// `case word in pat) body ;; ... esac` (patterns close with `)`, arms with
+// `;;`).
 func (p *Parser) caseCmd() *CaseCmd {
 	c := &CaseCmd{At: Pos{Line: p.tok.Line, Col: p.tok.Col}}
 	p.next() // case
@@ -408,7 +493,7 @@ func (p *Parser) caseCmd() *CaseCmd {
 		return nil
 	}
 	p.skipNewlines()
-	for p.err == nil && !p.isKeyword("end") && p.tok.Kind != EOF {
+	for p.err == nil && !p.isEnd() && p.tok.Kind != EOF {
 		arm := CaseArm{}
 		for {
 			arm.Pats = append(arm.Pats, p.word())
@@ -418,14 +503,21 @@ func (p *Parser) caseCmd() *CaseCmd {
 			}
 			break
 		}
-		if !p.expect("=>") {
+		// A POSIX arm closes its pattern list with `)`; easysh uses `=>`.
+		if p.tok.Kind == RParen {
+			p.next()
+		} else if !p.expect("=>") {
 			return nil
 		}
 		arm.Body = p.caseBody()
 		c.Arms = append(c.Arms, arm)
+		// POSIX arms end with `;;` (or the next pattern / esac).
+		if p.tok.Kind == Dsemi {
+			p.next()
+		}
 		p.skipNewlines()
 	}
-	if !p.expect("end") {
+	if !p.expectEnd() {
 		return nil
 	}
 	return c
@@ -438,7 +530,7 @@ func (p *Parser) caseCmd() *CaseCmd {
 func (p *Parser) caseBody() []*Stmt {
 	var out []*Stmt
 	p.skipNewlines()
-	for p.err == nil && p.tok.Kind != EOF && !p.isKeyword("end") {
+	for p.err == nil && p.tok.Kind != EOF && !p.isEnd() && p.tok.Kind != Dsemi {
 		if p.looksLikeArmStart() {
 			break
 		}
@@ -451,7 +543,7 @@ func (p *Parser) caseBody() []*Stmt {
 			p.skipNewlines()
 			continue
 		}
-		if p.isKeyword("end") || p.looksLikeArmStart() {
+		if p.isEnd() || p.looksLikeArmStart() {
 			break
 		}
 		break
@@ -542,6 +634,47 @@ func (p *Parser) funcDef() *FuncDef {
 	return f
 }
 
+// peekIsLParenRParen reports whether the next two tokens are `(` `)` — the
+// `name()` prefix of a POSIX function definition.
+func (p *Parser) peekIsLParenRParen() bool {
+	return p.peekN(1).Kind == LParen && p.peekN(2).Kind == RParen
+}
+
+// untilCmd parses `until cond do ... end` (POSIX: loop while cond is false).
+func (p *Parser) untilCmd() *WhileCmd {
+	c := &WhileCmd{At: Pos{Line: p.tok.Line, Col: p.tok.Col}, Until: true}
+	p.next() // until
+	c.Cond = p.stmtList()
+	if !p.expect("do") {
+		return nil
+	}
+	c.Body = p.stmtList()
+	if !p.expectEnd() {
+		return nil
+	}
+	return c
+}
+
+// bashFuncDef parses `name() { ... }` / `name () { ... }` (POSIX).
+func (p *Parser) bashFuncDef() *FuncDef {
+	f := &FuncDef{At: Pos{Line: p.tok.Line, Col: p.tok.Col}}
+	f.Name = p.tok.Lit
+	p.next() // name
+	p.next() // (
+	p.next() // )
+	p.skipNewlines()
+	if p.tok.Kind != LBrace {
+		p.errf("%s(): expected '{', got %s", f.Name, p.tok)
+		return nil
+	}
+	blk := p.block(false)
+	if blk == nil {
+		return nil
+	}
+	f.Body = blk.Body
+	return f
+}
+
 // ── redirects ───────────────────────────────────────────────────────────────
 
 // redirect parses one redirection.
@@ -557,13 +690,15 @@ func (p *Parser) redirect() *Redirect {
 		r.Fd = 0
 	case ">&", "<&":
 		r.Fd = 1
+	case "2>&":
+		r.Fd = 2
 	case "<<", "<<<":
 		r.Here = true
 		r.Fd = 0
 	}
 	p.next()
 	// `>&-` / `<&-` carry no target.
-	if op == ">&-" || op == "<&-" {
+	if op == ">&-" || op == "2>&-" || op == "<&-" {
 		return r
 	}
 	if p.tok.Kind != WordTok {
@@ -589,6 +724,25 @@ func (p *Parser) expect(kw string) bool {
 
 func (p *Parser) isKeyword(kw string) bool {
 	return p.tok.Kind == WordTok && p.tok.Lit == kw
+}
+
+// endKeywords: easysh closes blocks with `end`, but we also accept the bash
+// spellings (done/fi/esac) so AI-generated / pasted bash runs unmodified.
+var endKeywords = map[string]bool{"end": true, "done": true, "fi": true, "esac": true}
+
+// isEnd reports whether the current token closes a block.
+func (p *Parser) isEnd() bool {
+	return p.tok.Kind == WordTok && endKeywords[p.tok.Lit]
+}
+
+// expectEnd consumes the block terminator (end, or its bash alias).
+func (p *Parser) expectEnd() bool {
+	if !p.isEnd() {
+		p.errf("expected a block terminator (end/done/fi/esac), got %s", p.tok)
+		return false
+	}
+	p.next()
+	return true
 }
 
 // word parses one word from a single Word token, splitting it into parts.
@@ -659,8 +813,8 @@ func splitParts(raw string, base Pos) []WordPart {
 				}
 				if raw[j] == '$' {
 					flushSub()
-					name, n := readParam(raw, j+1)
-					parts = append(parts, &Param{At: base, Name: name})
+					pp, n := readParamPart(raw, j+1, posAt(raw, j, base))
+					parts = append(parts, pp)
 					j = n
 					continue
 				}
@@ -684,10 +838,26 @@ func splitParts(raw string, base Pos) []WordPart {
 			parts = append(parts, &CmdSub{At: posAt(raw, i, base), Body: parseInline(raw[i+2:k], bodyStart)})
 			i = k + 1
 		case c == '$':
-			name, n := readParam(raw, i+1)
+			pp, n := readParamPart(raw, i+1, posAt(raw, i, base))
 			flush(false)
-			parts = append(parts, &Param{At: base, Name: name})
+			parts = append(parts, pp)
 			i = n
+		case c == '`':
+			// Backtick command substitution: run the body like $(...).
+			flush(false)
+			j := i + 1
+			var body strings.Builder
+			for j < len(raw) && raw[j] != '`' {
+				if raw[j] == '\\' && j+1 < len(raw) {
+					body.WriteByte(raw[j+1])
+					j += 2
+					continue
+				}
+				body.WriteByte(raw[j])
+				j++
+			}
+			parts = append(parts, &CmdSub{At: posAt(raw, i, base), Body: parseInline(body.String(), posAt(raw, i+1, base))})
+			i = j + 1
 		case c == '\\' && i+1 < len(raw):
 			lit.WriteByte(raw[i+1])
 			i += 2
@@ -703,32 +873,119 @@ func splitParts(raw string, base Pos) []WordPart {
 	return parts
 }
 
-// readParam reads a variable name (or special char) starting at i (after '$').
-func readParam(s string, i int) (string, int) {
+// readParamPart reads a parameter reference starting at i (after '$') and
+// returns a Param plus the index just past it. Handles `$x`, `$1`, `$?` and the
+// braced forms `${x}` and POSIX expansions `${x:-def}`, `${#x}`, `${x#p}`,
+// `${x%%p}`, `${x/a/b}`, `${x:off:len}`.
+func readParamPart(s string, i int, base Pos) (*Param, int) {
 	if i >= len(s) {
-		return "", i
+		return &Param{At: base}, i
 	}
 	c := s[i]
-	// special one-char params
-	if c == '?' || c == '#' || c == '@' || c == '$' || (c >= '0' && c <= '9') {
-		return string(c), i + 1
-	}
-	if c == '{' {
-		j := i + 1
-		for j < len(s) && s[j] != '}' {
+	if c != '{' {
+		// special one-char params
+		if c == '?' || c == '#' || c == '@' || c == '$' || c == '*' || c == '!' || c == '-' || (c >= '0' && c <= '9') {
+			return &Param{At: base, Name: string(c)}, i + 1
+		}
+		j := i
+		for j < len(s) && isIdentByte(s[j], j == i) {
 			j++
 		}
-		name := s[i+1 : j]
-		if j < len(s) {
-			j++
-		}
-		return name, j
+		return &Param{At: base, Name: s[i:j]}, j
 	}
-	j := i
-	for j < len(s) && isIdentByte(s[j], j == i) {
+	// ${ ... }: find the matching close brace (nesting ${}).
+	j := i + 1
+	depth := 1
+	for j < len(s) && depth > 0 {
+		switch s[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		}
 		j++
 	}
-	return s[i:j], j
+	inner := s[i+1 : j-1]
+	p := parseBracedParam(inner, base)
+	return p, j
+}
+
+// parseBracedParam parses the text between `${` and `}` into a Param.
+func parseBracedParam(inner string, base Pos) *Param {
+	p := &Param{At: base}
+	// `${#x}` -> length of x, but only when what follows `#` is a bare parameter
+	// name with nothing else (so `${#x}` is length while `${#*/}` is the prefix
+	// operator with pattern `*/`).
+	if strings.HasPrefix(inner, "#") && len(inner) > 1 {
+		rest := inner[1:]
+		if isParamName(rest) {
+			p.Name = rest
+			p.Op = "#len"
+			return p
+		}
+	}
+	// The name is the leading identifier / special char.
+	ni := 0
+	if inner == "" {
+		return p
+	}
+	if inner[0] == '?' || inner[0] == '@' || inner[0] == '#' || inner[0] == '$' ||
+		inner[0] == '*' || inner[0] == '!' || inner[0] == '-' ||
+		(inner[0] >= '0' && inner[0] <= '9') {
+		ni = 1
+	} else {
+		for ni < len(inner) && isIdentByte(inner[ni], ni == 0) {
+			ni++
+		}
+	}
+	p.Name = inner[:ni]
+	rest := inner[ni:]
+	if rest == "" {
+		return p
+	}
+	// Operators (longest match first).
+	for _, op := range []string{":-", ":=", ":?", ":+", "##", "%%", "//", "-", "=", "?", "+", "#", "%", "/", ":"} {
+		if strings.HasPrefix(rest, op) {
+			p.Op = op
+			arg := rest[len(op):]
+			if arg != "" {
+				p.Word = &Word{At: base, Parts: splitParts(arg, base)}
+			}
+			return p
+		}
+	}
+	return p
+}
+
+// isParamName reports whether s is exactly a parameter name (identifier, digit,
+// or one of the special params) with no trailing operator.
+func isParamName(s string) bool {
+	if s == "" {
+		return false
+	}
+	switch s[0] {
+	case '?', '@', '#', '$', '*', '!', '-':
+		return len(s) == 1
+	}
+	if s[0] >= '0' && s[0] <= '9' {
+		for i := 0; i < len(s); i++ {
+			if s[i] < '0' || s[i] > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return isIdent(s)
+}
+
+// isParamOpChar reports whether c can start an expansion operator (so `${#x}`
+// is a length op but `${#}` is the `#` parameter).
+func isParamOpChar(c byte) bool {
+	switch c {
+	case ':', '-', '=', '?', '+', '#', '%', '/':
+		return true
+	}
+	return false
 }
 
 // matchingParen returns the index of the ')' matching the '(' at i.

@@ -39,7 +39,7 @@ func TestRedirects(t *testing.T) {
 	if len(sg.Redirs) != 2 {
 		t.Fatalf("want 2 redirects, got %d", len(sg.Redirs))
 	}
-	if sg.Redirs[0].Op != ">" || sg.Redirs[1].Op != ">&" {
+	if sg.Redirs[0].Op != ">" || sg.Redirs[1].Op != "2>&" {
 		t.Fatalf("ops = %q,%q", sg.Redirs[0].Op, sg.Redirs[1].Op)
 	}
 }

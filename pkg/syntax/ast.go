@@ -25,6 +25,7 @@ type Script struct {
 // Stmt is one statement: a pipeline, possibly in a &&/|| chain.
 type Stmt struct {
 	At    Pos
+	Bang  bool        // leading `!` negates the statement's status
 	Chain []*Pipeline // logical chain: pipe0 (&&|pipe1) (|||pipe2) ...
 	Ops   []string    // operators between pipelines: "&&", "||" (len = len(Chain)-1)
 }
@@ -52,10 +53,12 @@ type Simple struct {
 	Args []*Word
 }
 
-// Binding is `let x = word` / `mut x = word` / `export x = word`.
+// Binding is `let x = word` / `mut x = word` / `export x = word`, or a POSIX
+// assignment `name=value` (Mode "assign": persistent when it stands alone,
+// per-command environment when it prefixes a command).
 type Binding struct {
 	At    Pos
-	Mode  string // "let" | "mut" | "export"
+	Mode  string // "let" | "mut" | "export" | "assign" | "prefix"
 	Name  string
 	Value *Word
 }
@@ -94,11 +97,13 @@ type ForCmd struct {
 	Body []*Stmt
 }
 
-// WhileCmd is `while cond do ... end`.
+// WhileCmd is `while cond do ... end` (or `until cond do ... end` when Until
+// is set: loop while cond is false).
 type WhileCmd struct {
-	At   Pos
-	Cond []*Stmt
-	Body []*Stmt
+	At    Pos
+	Until bool
+	Cond  []*Stmt
+	Body  []*Stmt
 }
 
 // CaseCmd is `case word in pat => body ... end`.
@@ -150,10 +155,14 @@ type Lit struct {
 	Quoted bool // true when it came from '...' or "..."
 }
 
-// Param is `$x` or `${x}`.
+// Param is `$x`, `${x}`, or a POSIX parameter expansion `${x OP word}`.
+// Op is one of "", ":-", "-", ":=", "=", ":?", "?", ":+", "+", "#", "##",
+// "%", "%%", "/", "//", ":", in which case Word carries the operand.
 type Param struct {
 	At   Pos
 	Name string
+	Op   string
+	Word *Word
 }
 
 // CmdSub is `$( ... )`.

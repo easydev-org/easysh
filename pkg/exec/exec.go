@@ -248,6 +248,14 @@ func (r *Runner) runStmt(ctx context.Context, s *syntax.Stmt, st *state) int {
 			}
 		}
 	}
+	// A leading `!` inverts the statement's exit status (POSIX).
+	if s.Bang {
+		if code == 0 {
+			code = 1
+		} else {
+			code = 0
+		}
+	}
 	r.lastExit = code
 	return code
 }
@@ -374,25 +382,40 @@ func (r *Runner) runStage(ctx context.Context, sg *syntax.Stage, st *state) int 
 	fdOut := r.reg.NewFd(flow.Stdout, owner)
 	fdErr := r.reg.NewFd(flow.Stderr, owner)
 
-	// Bindings.
+	// Bindings. `prefix` assignments become a per-command environment overlay
+	// (POSIX `FOO=bar cmd`), applied to the command's env only; `assign`
+	// (a lone `name=value`) persists in the shell.
+	var prefixEnv []string
 	for _, b := range sg.Bindings {
 		val := r.expandOne(b.Value, st)
-		if b.Mode == "set" {
-			// A bare assignment mutates an existing `mut` variable.
+		switch b.Mode {
+		case "set":
+			// A bare spaced assignment mutates an existing `mut` variable.
 			if _, ok := r.vars[b.Name]; !ok {
 				fmt.Fprintf(writerOf(st.stderr, r), "%s: not declared (use `let`/`mut`)\n", b.Name)
 				return 1
 			}
 			r.vars[b.Name] = val
-			continue
-		}
-		r.vars[b.Name] = val
-		if b.Mode == "mut" {
+		case "assign":
+			r.vars[b.Name] = val
 			r.mut[b.Name] = true
-		}
-		if b.Mode == "export" {
+		case "prefix":
+			prefixEnv = append(prefixEnv, b.Name+"="+val)
+			r.vars[b.Name] = val // visible to expansions in this command's words
+		case "mut":
+			r.vars[b.Name] = val
+			r.mut[b.Name] = true
+		case "export":
+			r.vars[b.Name] = val
 			st.env = append(st.env, b.Name+"="+val)
+		default:
+			r.vars[b.Name] = val
 		}
+	}
+	if len(prefixEnv) > 0 {
+		sub := *st
+		sub.env = append(append([]string{}, st.env...), prefixEnv...)
+		st = &sub
 	}
 
 	// Redirects (in order; each mutates a slot).
@@ -486,13 +509,15 @@ func (r *Runner) applyRedirect(rd *syntax.Redirect, sg *syntax.Stage, st *state)
 		st.stdout = s
 		st.stderr = s
 	case ">&":
-		src := st.stdout
-		if target == "1" {
-			src = st.stdout
-		} else if target == "2" {
-			src = st.stderr
-		}
-		st.stderr = r.reg.Dup(src, ref)
+		// `>&N` points fd 1 (stdout) at the fd N names. `echo x >&2` sends
+		// stdout to stderr; `>&1` is a no-op.
+		st.stdout = r.reg.Dup(fdByName(st, target), ref)
+	case "2>&":
+		// `2>&N` points fd 2 (stderr) at the fd N names; `2>&1` merges stderr
+		// into stdout.
+		st.stderr = r.reg.Dup(fdByName(st, target), ref)
+	case "2>&-":
+		st.stderr = r.reg.NewNull(true)
 	case "<&":
 		st.stdin = r.reg.Dup(st.stdin, ref)
 	case ">&-", "<&-":
@@ -510,6 +535,19 @@ func (r *Runner) applyRedirect(rd *syntax.Redirect, sg *syntax.Stage, st *state)
 		st.stdin = r.reg.NewHere(rd.Op, body, ref, r.activeSink, r.opts.RingLines)
 	}
 	return 0
+}
+
+// fdByName resolves an fd number (as written in a redirection target) to the
+// stage's stream: "0" = stdin, "2" = stderr, anything else = stdout.
+func fdByName(st *state, name string) flow.Stream {
+	switch name {
+	case "0":
+		return st.stdin
+	case "2":
+		return st.stderr
+	default:
+		return st.stdout
+	}
 }
 
 // runSimple executes a simple command (builtin, function, or external).

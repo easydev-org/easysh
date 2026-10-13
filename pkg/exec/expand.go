@@ -2,6 +2,7 @@ package exec
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,13 +17,32 @@ func (r *Runner) expandOne(w *syntax.Word, st *state) string {
 	if w == nil {
 		return ""
 	}
+	// Tilde expansion: a leading unquoted `~` (as the whole first segment or
+	// `~/...`) becomes $HOME.
+	if len(w.Parts) > 0 {
+		if l, ok := w.Parts[0].(*syntax.Lit); ok && !l.Quoted {
+			if l.Value == "~" || strings.HasPrefix(l.Value, "~/") {
+				home := r.home(st)
+				if home != "" {
+					rest := strings.TrimPrefix(l.Value, "~")
+					var b strings.Builder
+					b.WriteString(home)
+					b.WriteString(rest)
+					for _, p := range w.Parts[1:] {
+						b.WriteString(r.partText(p, st))
+					}
+					return b.String()
+				}
+			}
+		}
+	}
 	var b strings.Builder
 	for _, p := range w.Parts {
 		switch v := p.(type) {
 		case *syntax.Lit:
 			b.WriteString(v.Value)
 		case *syntax.Param:
-			b.WriteString(r.param(v.Name, st))
+			b.WriteString(r.paramExp(v, st))
 		case *syntax.CmdSub:
 			b.WriteString(r.cmdSubst(v.Body, st))
 		case *syntax.Arith:
@@ -131,6 +151,106 @@ func (r *Runner) param(name string, st *state) string {
 		}
 	}
 	return ""
+}
+
+// partText expands a single word part to text (no field splitting).
+func (r *Runner) partText(p syntax.WordPart, st *state) string {
+	switch v := p.(type) {
+	case *syntax.Lit:
+		return v.Value
+	case *syntax.Param:
+		return r.paramExp(v, st)
+	case *syntax.CmdSub:
+		return r.cmdSubst(v.Body, st)
+	case *syntax.Arith:
+		return strconv.FormatInt(r.arith(v.Raw, st), 10)
+	}
+	return ""
+}
+
+// home resolves $HOME (or the passwd-style default) for tilde expansion.
+func (r *Runner) home(st *state) string {
+	if h := r.param("HOME", st); h != "" {
+		return h
+	}
+	return os.Getenv("HOME")
+}
+
+// paramExp resolves a Param, applying a POSIX expansion operator if present.
+func (r *Runner) paramExp(p *syntax.Param, st *state) string {
+	val := r.param(p.Name, st)
+	set := r.isSet(p.Name, st)
+	switch p.Op {
+	case "":
+		return val
+	case "#len":
+		return strconv.Itoa(len(val))
+	case ":-":
+		if !set || val == "" {
+			return r.expandOne(p.Word, st)
+		}
+		return val
+	case "-":
+		if !set {
+			return r.expandOne(p.Word, st)
+		}
+		return val
+	case ":=", "=":
+		if (!set || val == "") && p.Op == ":=" || (!set && p.Op == "=") {
+			nv := r.expandOne(p.Word, st)
+			r.vars[p.Name] = nv
+			return nv
+		}
+		return val
+	case ":?":
+		if !set || val == "" {
+			return ""
+		}
+		return val
+	case ":+":
+		if set && val != "" {
+			return r.expandOne(p.Word, st)
+		}
+		return ""
+	case "+":
+		if set {
+			return r.expandOne(p.Word, st)
+		}
+		return ""
+	case "#":
+		return trimPrefixShortest(val, r.expandOne(p.Word, st))
+	case "##":
+		return trimPrefixLongest(val, r.expandOne(p.Word, st))
+	case "%":
+		return trimSuffixShortest(val, r.expandOne(p.Word, st))
+	case "%%":
+		return trimSuffixLongest(val, r.expandOne(p.Word, st))
+	case "/", "//":
+		return substPattern(val, r.expandOne(p.Word, st), p.Op == "//")
+	case ":":
+		return substrExp(val, r.expandOne(p.Word, st))
+	}
+	return val
+}
+
+// isSet reports whether a parameter is defined (vs expanding to empty).
+func (r *Runner) isSet(name string, st *state) bool {
+	switch name {
+	case "?", "@", "#", "PWD":
+		return true
+	}
+	if n, err := strconv.Atoi(name); err == nil {
+		return n >= 1 && n <= len(r.args)
+	}
+	if _, ok := r.vars[name]; ok {
+		return true
+	}
+	for _, kv := range st.env {
+		if strings.HasPrefix(kv, name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // cmdSubst runs a $( ... ) body, capturing stdout as a capture flow.
