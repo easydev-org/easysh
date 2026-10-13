@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/easydev-org/easysh/pkg/flow"
 	"github.com/easydev-org/easysh/pkg/syntax"
@@ -60,6 +61,9 @@ type Runner struct {
 	activeSink flow.Sink // the sink for the current run (per-job)
 
 	funcs map[string]*syntax.FuncDef
+
+	mu   sync.Mutex
+	pids map[int]bool // running external-command pids, for KillAll
 }
 
 // New creates a runner.
@@ -77,7 +81,62 @@ func New(opts Options) *Runner {
 		vars:   map[string]string{},
 		mut:    map[string]bool{},
 		funcs:  map[string]*syntax.FuncDef{},
+		pids:   map[int]bool{},
 	}
+}
+
+// track / untrack record running external commands so KillAll can reap them.
+func (r *Runner) track(pid int) {
+	if pid <= 0 {
+		return
+	}
+	r.mu.Lock()
+	r.pids[pid] = true
+	r.mu.Unlock()
+}
+
+func (r *Runner) untrack(pid int) {
+	r.mu.Lock()
+	delete(r.pids, pid)
+	r.mu.Unlock()
+}
+
+// KillAll kills every process tree this runner has started. Called on shutdown
+// so no job's children outlive the worker.
+func (r *Runner) KillAll() {
+	r.mu.Lock()
+	pids := make([]int, 0, len(r.pids))
+	for p := range r.pids {
+		pids = append(pids, p)
+	}
+	r.mu.Unlock()
+	killAllTree(pids)
+}
+
+// RunWithEnv runs src with a per-run workdir, extra env (KEY=VALUE), and
+// explicit stdin/stdout/stderr. It is the entry point a host (e.g. a worker
+// running jobs) uses: each run is independent, but variables/functions/cwd of
+// the Runner persist across calls (a session).
+func (r *Runner) RunWithEnv(ctx context.Context, src, workdir string, env []string, stdin io.Reader, stdout, stderr io.Writer) (*Result, error) {
+	// Per-run workdir/env/stdout/stderr override the Runner's defaults.
+	saved := r.opts
+	if workdir != "" {
+		r.opts.Dir = workdir
+		r.curDir = workdir
+	}
+	if len(env) > 0 {
+		r.opts.Env = env
+	}
+	r.opts.Stdin = stdin
+	r.opts.Stdout = stdout
+	r.opts.Stderr = stderr
+	res, err := r.RunWithIO(ctx, src, r.opts.Sink, stdin)
+	r.opts.Dir = saved.Dir
+	r.opts.Env = saved.Env
+	r.opts.Stdin = saved.Stdin
+	r.opts.Stdout = saved.Stdout
+	r.opts.Stderr = saved.Stderr
+	return res, err
 }
 
 // Run parses and executes src, returning the exit code and the graph.
@@ -478,13 +537,43 @@ func (r *Runner) runSimple(ctx context.Context, s *syntax.Simple, st *state) int
 
 // runExternal runs a program with the stage's streams wired to fds.
 func (r *Runner) runExternal(ctx context.Context, argv []string, st *state) int {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	// Route batch wrappers through cmd /c on Windows (.cmd/.bat are not PE
+	// images); identity elsewhere.
+	name, args := prepareExec(argv[0], argv[1:])
+	cmd := exec.CommandContext(ctx, name, args...)
+	// Put the child in its own group so a cancel reaps the whole tree.
+	setupProcessGroup(cmd)
 	cmd.Dir = st.dir
-	cmd.Env = st.env
+	cmd.Env = withPWD(st.env, st.dir)
 	cmd.Stdin = readerOf(st.stdin, r)
 	cmd.Stdout = writerOf(st.stdout, r)
 	cmd.Stderr = writerOf(st.stderr, r)
-	if err := cmd.Run(); err != nil {
+	// Kill the tree when ctx is cancelled (the default CommandContext only kills
+	// the direct child). The handle is captured here, so it is race-free.
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			killTree(cmd.Process.Pid)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 2 * time.Second
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(writerOf(st.stderr, r), "%s: %v\n", argv[0], err)
+		return 127
+	}
+	attachJob(cmd) // windows: Job Object for tree-kill; no-op on unix
+	pid := 0
+	if cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
+	r.track(pid)
+	err := cmd.Wait()
+	releaseJob(pid)
+	r.untrack(pid)
+	if err != nil {
+		if ctx.Err() != nil {
+			return 130
+		}
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
 		}

@@ -107,6 +107,10 @@ func (r *Runner) param(name string, st *state) string {
 		return strings.Join(r.args, " ")
 	case "#":
 		return strconv.Itoa(len(r.args))
+	case "PWD":
+		// The working directory, always live (it follows `cd`), like a real
+		// shell's $PWD.
+		return st.dir
 	}
 	if name == "" {
 		return ""

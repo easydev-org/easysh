@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // isFile / isDir back the test builtin.
@@ -21,6 +22,19 @@ func isDir(p string) bool {
 func globMatch(pat, name string) bool {
 	ok, err := filepath.Match(pat, name)
 	return err == nil && ok
+}
+
+// withPWD returns env with PWD set to dir (replacing any existing PWD), so an
+// external command sees the right working directory.
+func withPWD(env []string, dir string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PWD=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "PWD="+dir)
 }
 
 type arithParser struct {
