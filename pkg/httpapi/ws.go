@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcp-sdk/easysh/internal/daemon"
+	"github.com/easydev-org/easysh/pkg/daemon"
 	"github.com/gorilla/websocket"
 )
 

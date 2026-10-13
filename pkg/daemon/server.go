@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcp-sdk/easysh/internal/proto"
-	"github.com/abcp-sdk/easysh/internal/store"
+	"github.com/easydev-org/easysh/pkg/proto"
+	"github.com/easydev-org/easysh/pkg/store"
 )
 
 // Server owns all sessions and serves the wire protocol over a unix socket

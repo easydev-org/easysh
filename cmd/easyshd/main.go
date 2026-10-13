@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/abcp-sdk/easysh/internal/daemon"
-	"github.com/abcp-sdk/easysh/internal/httpapi"
-	"github.com/abcp-sdk/easysh/internal/store"
-	"github.com/abcp-sdk/easysh/internal/webui"
+	"github.com/easydev-org/easysh/pkg/daemon"
+	"github.com/easydev-org/easysh/pkg/httpapi"
+	"github.com/easydev-org/easysh/pkg/store"
+	"github.com/easydev-org/easysh/pkg/webui"
 )
 
 func main() {

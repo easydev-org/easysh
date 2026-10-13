@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abcp-sdk/easysh/internal/store"
+	"github.com/easydev-org/easysh/pkg/store"
 )
 
 // TestGraphGrowsLive checks the graph is populated while the job runs, not just

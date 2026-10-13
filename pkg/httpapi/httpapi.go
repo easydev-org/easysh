@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abcp-sdk/easysh/internal/daemon"
-	"github.com/abcp-sdk/easysh/internal/store"
+	"github.com/easydev-org/easysh/pkg/daemon"
+	"github.com/easydev-org/easysh/pkg/store"
 )
 
 // Server is the HTTP API.

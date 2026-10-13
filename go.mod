@@ -1,4 +1,4 @@
-module github.com/abcp-sdk/easysh
+module github.com/easydev-org/easysh
 
 go 1.26.0
 

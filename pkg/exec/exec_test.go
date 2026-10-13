@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abcp-sdk/easysh/internal/flow"
+	"github.com/easydev-org/easysh/pkg/flow"
 )
 
 // run executes src with captured stdout and returns (stdout, registry, code).

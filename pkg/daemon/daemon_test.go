@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abcp-sdk/easysh/internal/store"
+	"github.com/easydev-org/easysh/pkg/store"
 )
 
 // newTestSession makes a session with a short detach threshold and no store.

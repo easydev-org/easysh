@@ -3,7 +3,7 @@ package exec
 import (
 	"context"
 
-	"github.com/abcp-sdk/easysh/internal/syntax"
+	"github.com/easydev-org/easysh/pkg/syntax"
 )
 
 // runIf evaluates the condition and runs the matching branch.

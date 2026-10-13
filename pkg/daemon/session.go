@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcp-sdk/easysh/internal/exec"
-	"github.com/abcp-sdk/easysh/internal/flow"
-	"github.com/abcp-sdk/easysh/internal/store"
+	"github.com/easydev-org/easysh/pkg/exec"
+	"github.com/easydev-org/easysh/pkg/flow"
+	"github.com/easydev-org/easysh/pkg/store"
 )
 
 // DefaultDetachAfter is how long a foreground job may run before it is detached

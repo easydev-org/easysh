@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abcp-sdk/easysh/internal/store"
+	"github.com/easydev-org/easysh/pkg/store"
 )
 
 // TestHistorySharedAcrossSessions checks that two Session objects with the same

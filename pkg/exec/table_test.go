@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/abcp-sdk/easysh/internal/flow"
+	"github.com/easydev-org/easysh/pkg/flow"
 )
 
 // runCase is one table entry: a script and the exact stdout it must produce.

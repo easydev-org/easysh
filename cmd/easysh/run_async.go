@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/abcp-sdk/easysh/internal/proto"
+	"github.com/easydev-org/easysh/pkg/proto"
 )
 
 // RunAsync starts a script and returns its job id immediately, streaming output

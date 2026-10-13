@@ -17,7 +17,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/abcp-sdk/easysh/internal/proto"
+	"github.com/easydev-org/easysh/pkg/proto"
 )
 
 func main() {

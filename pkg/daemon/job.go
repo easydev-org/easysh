@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abcp-sdk/easysh/internal/flow"
-	"github.com/abcp-sdk/easysh/internal/store"
+	"github.com/easydev-org/easysh/pkg/flow"
+	"github.com/easydev-org/easysh/pkg/store"
 )
 
 // errNoStdin is returned when a job has no stdin pipe (already finished).

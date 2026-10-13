@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/abcp-sdk/easysh/internal/flow"
-	"github.com/abcp-sdk/easysh/internal/syntax"
+	"github.com/easydev-org/easysh/pkg/flow"
+	"github.com/easydev-org/easysh/pkg/syntax"
 )
 
 // expandOne expands a word to exactly one string (no field splitting, no glob).

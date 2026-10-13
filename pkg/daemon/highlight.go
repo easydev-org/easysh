@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/abcp-sdk/easysh/internal/proto"
-	"github.com/abcp-sdk/easysh/internal/syntax"
+	"github.com/easydev-org/easysh/pkg/proto"
+	"github.com/easydev-org/easysh/pkg/syntax"
 )
 
 // keywords of the easysh language (block terminators included).

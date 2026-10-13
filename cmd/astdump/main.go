@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/abcp-sdk/easysh/internal/syntax"
+	"github.com/easydev-org/easysh/pkg/syntax"
 )
 
 func main() {

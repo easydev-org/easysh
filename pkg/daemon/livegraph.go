@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"github.com/abcp-sdk/easysh/internal/flow"
+	"github.com/easydev-org/easysh/pkg/flow"
 )
 
 // liveFlow is a subscriber to one flow's bytes (the WebUI's per-flow watch).

@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/abcp-sdk/easysh/internal/proto"
+	"github.com/easydev-org/easysh/pkg/proto"
 )
 
 // repl runs the interactive loop: a raw-mode line editor with history,
