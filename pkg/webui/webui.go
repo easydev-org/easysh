@@ -1,6 +1,10 @@
-// Package webui embeds the easysh control panel: a Svelte SPA (built by webui/
-// via vite into dist/, embedded here) served at "/" so it is same-origin with
-// the HTTP API — the browser needs only a bearer token, no CORS.
+// Package webui embeds the easysh control panel: a Svelte SPA from the
+// easysh-webui repo (github.com/easydev-org/easysh-webui), built into dist/ and
+// embedded here, served at "/" so it is same-origin with the HTTP API — the
+// browser needs only a bearer token, no CORS. dist/ is NOT committed (easysh is
+// not a container service): ./build.sh builds the easysh-webui repo into dist/
+// and then compiles the binaries, so the SPA is embedded into the exported
+// binary.
 //
 // The panel offers: an xterm.js terminal that runs easysh over a WebSocket, a
 // Jobs list, and — the point of easysh — a dataflow-graph view for each job

@@ -1,8 +1,4 @@
+/dist/
+/pkg/webui/dist/
 *.test
 *.out
-/flowsh
-/astdump
-internal/exec/out.txt
-webui/node_modules/
-webui/dist/
-.easyvcs-workspace
