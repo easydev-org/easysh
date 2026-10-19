@@ -315,7 +315,7 @@ func (h *Server) jobOutput(w http.ResponseWriter, r *http.Request, job *daemon.J
 	}
 	// Fall back to the store.
 	if h.Store != nil {
-		if b, err := h.Store.FlowChunks(id, 2); err == nil && len(b) > 0 {
+		if b, err := h.Store.Flow.Content(id, 2); err == nil && len(b) > 0 {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write(b)
 			return
@@ -356,14 +356,14 @@ func (h *Server) jobGraph(w http.ResponseWriter, job *daemon.Job, id string) {
 		}
 		edges = es
 	} else if h.Store != nil {
-		if rows, err := h.Store.Flows(id); err == nil {
+		if rows, err := h.Store.Flow.Flows(id); err == nil {
 			for _, f := range rows {
 				flows = append(flows, flowJSON{FID: f.FID, Kind: f.Kind, Fd: f.Fd, Owner: f.Owner,
 					Producer: f.Producer, Consumer: f.Consumer, Path: f.Path, Bytes: f.Bytes, Lines: f.Lines,
 					Line: f.Line, Col: f.Col, EndLine: f.EndLine, EndCol: f.EndCol, Iter: f.Iter})
 			}
 		}
-		edges, _ = h.Store.Edges(id)
+		edges, _ = h.Store.Flow.Edges(id)
 	}
 	if flows == nil {
 		flows = []flowJSON{}
@@ -394,7 +394,7 @@ func (h *Server) jobStdin(w http.ResponseWriter, r *http.Request, job *daemon.Jo
 // jobFlowContent returns one flow's captured intermediate bytes.
 func (h *Server) jobFlowContent(w http.ResponseWriter, r *http.Request, jobID string, fid int64) {
 	if h.Store != nil {
-		if b, err := h.Store.FlowChunks(jobID, fid); err == nil {
+		if b, err := h.Store.Flow.Content(jobID, fid); err == nil {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write(b)
 			return
@@ -418,7 +418,7 @@ func (h *Server) jobFlowWatch(w http.ResponseWriter, r *http.Request, job *daemo
 
 	if job == nil {
 		if h.Store != nil {
-			if b, _ := h.Store.FlowChunks(jobID, fid); len(b) > 0 {
+			if b, _ := h.Store.Flow.Content(jobID, fid); len(b) > 0 {
 				sse(w, "output", string(b))
 			}
 		}
@@ -429,7 +429,7 @@ func (h *Server) jobFlowWatch(w http.ResponseWriter, r *http.Request, job *daemo
 
 	// Replay what we have so far, then stream live.
 	if h.Store != nil {
-		if b, _ := h.Store.FlowChunks(jobID, fid); len(b) > 0 {
+		if b, _ := h.Store.Flow.Content(jobID, fid); len(b) > 0 {
 			sse(w, "output", string(b))
 			flusher.Flush()
 		}
@@ -469,7 +469,7 @@ func (h *Server) jobWatch(w http.ResponseWriter, r *http.Request, job *daemon.Jo
 	if job == nil {
 		// Finished job: send what the store has, then done.
 		if h.Store != nil {
-			if b, _ := h.Store.FlowChunks(jobID, 2); len(b) > 0 {
+			if b, _ := h.Store.Flow.Content(jobID, 2); len(b) > 0 {
 				sse(w, "output", string(b))
 			}
 		}

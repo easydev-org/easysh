@@ -37,6 +37,12 @@ func (r *Runner) SetRegistryHook(fn func(*flow.Registry)) {
 	r.opts.OnRegistry = fn
 }
 
+// SetSink sets (or clears, with nil) the destination for captured flow bytes.
+// A caller that persists intermediate results points this at its own sink.
+func (r *Runner) SetSink(s flow.Sink) {
+	r.opts.Sink = s
+}
+
 // Result is the outcome of a run plus the flow graph it produced.
 type Result struct {
 	ExitCode int

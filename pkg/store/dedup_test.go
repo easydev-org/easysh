@@ -21,7 +21,7 @@ func TestLineDedupRoundTrip(t *testing.T) {
 	st.EnqueueFlushFlow("job1", 7) // promote any trailing partial line
 	time.Sleep(500 * time.Millisecond)
 
-	got, err := st.FlowChunks("job1", 7)
+	got, err := st.Flow.Content("job1", 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestPartialLinePreserved(t *testing.T) {
 	st.EnqueueFlushFlow("job2", 3)
 	time.Sleep(500 * time.Millisecond)
 
-	got, err := st.FlowChunks("job2", 3)
+	got, err := st.Flow.Content("job2", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestBytesAcrossChunks(t *testing.T) {
 	st.EnqueueChunk("job3", 1, 1, []byte("lo world\nsecond line\n"))
 	time.Sleep(500 * time.Millisecond)
 
-	got, _ := st.FlowChunks("job3", 1)
+	got, _ := st.Flow.Content("job3", 1)
 	if string(got) != "hello world\nsecond line\n" {
 		t.Fatalf("chunk-spanning line wrong: %q", got)
 	}

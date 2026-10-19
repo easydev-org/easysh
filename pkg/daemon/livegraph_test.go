@@ -78,11 +78,11 @@ func TestGraphPersists(t *testing.T) {
 	s := NewSession("s", t.TempDir(), []string{"PATH=/usr/bin:/bin"}, st, time.Minute)
 	j, _ := s.StartJob(context.Background(), "echo hi | cat", nil)
 	j.Wait()
-	flows, err := st.Flows(j.ID)
+	flows, err := st.Flow.Flows(j.ID)
 	if err != nil || len(flows) == 0 {
 		t.Fatalf("flows not persisted: %v %d", err, len(flows))
 	}
-	edges, _ := st.Edges(j.ID)
+	edges, _ := st.Flow.Edges(j.ID)
 	if len(edges) == 0 {
 		t.Fatal("edges not persisted")
 	}

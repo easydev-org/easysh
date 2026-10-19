@@ -246,7 +246,7 @@ func (j *Job) run(ctx context.Context) {
 	// Persist (outside the job lock: the store is its own thing).
 	if j.session.store != nil {
 		for _, fr := range snapshot {
-			j.session.store.PutFlow(j.ID, store.FlowRow{
+			j.session.store.Flow.PutFlow(j.ID, store.FlowRow{
 				FID: fr.FID, Kind: fr.Kind, Fd: fr.Fd, Owner: fr.Owner,
 				Producer: fr.Producer, Consumer: fr.Consumer,
 				Path: fr.Path, Bytes: fr.Bytes, Lines: fr.Lines,
@@ -254,7 +254,7 @@ func (j *Job) run(ctx context.Context) {
 			})
 		}
 		for _, e := range edges {
-			j.session.store.PutEdge(j.ID, e[0], e[1])
+			j.session.store.Flow.PutEdge(j.ID, e[0], e[1])
 		}
 		// Emit every flow's trailing partial line (a stream not ending in '\n'),
 		// so nothing is lost.

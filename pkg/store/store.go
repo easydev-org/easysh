@@ -22,6 +22,8 @@ const maxPartBytes = 256 * 1024
 // Store is the SQLite-backed job store.
 type Store struct {
 	db *sql.DB
+	// Flow is the shared dataflow-graph store (same SQL the worker uses).
+	Flow *FlowStore
 
 	mu     sync.Mutex
 	queue  []line
@@ -57,6 +59,12 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	fs, err := NewFlowStore(db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	s.Flow = fs
 	go s.writer()
 	return s, nil
 }
@@ -273,45 +281,6 @@ func (s *Store) MarkDetached(id string) {
 	s.db.Exec(`UPDATE jobs SET detached=1, state='detached' WHERE id=?`, id)
 }
 
-// PutFlow records one flow row.
-func (s *Store) PutFlow(jobID string, f FlowRow) error {
-	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO flow (job_id, fid, kind, fd, owner, producer, consumer, path, dup_of, line, col, end_line, end_col, iter, bytes, lines, sha256, started_at, closed_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		jobID, f.FID, f.Kind, f.Fd, f.Owner, f.Producer, f.Consumer, f.Path, f.DupOf, f.Line,
-		f.Col, f.EndLine, f.EndCol, f.Iter,
-		f.Bytes, f.Lines, f.SHA256, f.StartedAt, f.ClosedAt)
-	return err
-}
-
-// PutEdge records one flow edge.
-func (s *Store) PutEdge(jobID string, from, to int64) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO flow_edge (job_id, from_fid, to_fid) VALUES (?,?,?)`, jobID, from, to)
-	return err
-}
-
-// FlowRow is one row of the flow table.
-type FlowRow struct {
-	FID       int64
-	Kind      string
-	Fd        string
-	Owner     string
-	Producer  string
-	Consumer  string
-	Path      string
-	DupOf     int64
-	Line      int
-	Col       int
-	EndLine   int
-	EndCol    int
-	Iter      string
-	Bytes     int64
-	Lines     int64
-	SHA256    string
-	StartedAt int64
-	ClosedAt  int64
-}
-
 // CountJobs returns the number of persisted jobs (for tests and diagnostics).
 func (s *Store) CountJobs() int {
 	var n int
@@ -386,49 +355,6 @@ func (s *Store) FlowChunks(jobID string, fid int64) ([]byte, error) {
 			return nil, err
 		}
 		out = append(out, b...)
-	}
-	return out, rows.Err()
-}
-
-// Flows returns the flow rows for a job (from the store).
-func (s *Store) Flows(jobID string) ([]FlowRow, error) {
-	rows, err := s.db.Query(
-		`SELECT fid,kind,COALESCE(fd,''),COALESCE(owner,''),COALESCE(producer,''),COALESCE(consumer,''),
-		        COALESCE(path,''),COALESCE(dup_of,0),COALESCE(line,0),
-		        COALESCE(col,0),COALESCE(end_line,0),COALESCE(end_col,0),COALESCE(iter,''),
-		        bytes,lines,COALESCE(sha256,''),started_at,COALESCE(closed_at,0)
-		 FROM flow WHERE job_id=? ORDER BY fid`, jobID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []FlowRow
-	for rows.Next() {
-		var f FlowRow
-		if err := rows.Scan(&f.FID, &f.Kind, &f.Fd, &f.Owner, &f.Producer, &f.Consumer,
-			&f.Path, &f.DupOf, &f.Line, &f.Col, &f.EndLine, &f.EndCol, &f.Iter,
-			&f.Bytes, &f.Lines, &f.SHA256, &f.StartedAt, &f.ClosedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
-}
-
-// Edges returns the flow edges for a job.
-func (s *Store) Edges(jobID string) ([][2]int64, error) {
-	rows, err := s.db.Query(`SELECT from_fid,to_fid FROM flow_edge WHERE job_id=? ORDER BY from_fid,to_fid`, jobID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out [][2]int64
-	for rows.Next() {
-		var a, b int64
-		if err := rows.Scan(&a, &b); err != nil {
-			return nil, err
-		}
-		out = append(out, [2]int64{a, b})
 	}
 	return out, rows.Err()
 }
