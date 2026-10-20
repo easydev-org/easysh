@@ -77,7 +77,7 @@ func (r *Runner) builtin(ctx context.Context, name string, args []string, st *st
 		}
 		return 0, true
 	case "test", "[":
-		return r.test(args), true
+		return r.test(args, st.dir), true
 	case "read":
 		return r.read(args, st), true
 	case "export":
@@ -101,7 +101,7 @@ func (r *Runner) builtin(ctx context.Context, name string, args []string, st *st
 }
 
 // test implements a minimal `test`/`[` (ints and strings, -f -d -z -n).
-func (r *Runner) test(args []string) int {
+func (r *Runner) test(args []string, dir string) int {
 	if len(args) > 0 && args[len(args)-1] == "]" {
 		args = args[:len(args)-1]
 	}
@@ -124,12 +124,12 @@ func (r *Runner) test(args []string) int {
 			}
 			return 1
 		case "-f":
-			if isFile(args[1]) {
+			if isFile(args[1], dir) {
 				return 0
 			}
 			return 1
 		case "-d":
-			if isDir(args[1]) {
+			if isDir(args[1], dir) {
 				return 0
 			}
 			return 1

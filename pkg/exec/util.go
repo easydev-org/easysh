@@ -8,14 +8,24 @@ import (
 )
 
 // isFile / isDir back the test builtin.
-func isFile(p string) bool {
-	st, err := os.Stat(p)
+func isFile(p, dir string) bool {
+	st, err := os.Stat(resolvePath(p, dir))
 	return err == nil && !st.IsDir()
 }
 
-func isDir(p string) bool {
-	st, err := os.Stat(p)
+func isDir(p, dir string) bool {
+	st, err := os.Stat(resolvePath(p, dir))
 	return err == nil && st.IsDir()
+}
+
+// resolvePath resolves a possibly-relative path against the session dir (dir),
+// so `test -f package.json` sees the file in the shell's cwd — not the daemon
+// process's cwd.
+func resolvePath(p, dir string) string {
+	if p == "" || filepath.IsAbs(p) || dir == "" {
+		return p
+	}
+	return filepath.Join(dir, p)
 }
 
 // globMatch matches name against a glob pattern (* ? [..]).

@@ -234,7 +234,16 @@ func (r *Runner) runStmts(ctx context.Context, stmts []*syntax.Stmt, st *state) 
 		if ctx.Err() != nil {
 			return 130
 		}
-		code = r.runStmt(ctx, s, st)
+		// Each statement runs on a COPY of state, so a redirect (which mutates
+		// st.stdout/stderr/stdin in place) applies to THIS statement only and
+		// never leaks onto the following ones (POSIX: redirections are
+		// per-command). Session-mutating builtins (cd changes dir; export
+		// changes env) are copied back so they persist; only the three fd slots
+		// stay isolated to the statement.
+		sub := *st
+		code = r.runStmt(ctx, s, &sub)
+		st.dir = sub.dir
+		st.env = sub.env
 	}
 	return code
 }

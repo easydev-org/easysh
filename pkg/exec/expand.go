@@ -75,7 +75,7 @@ func (r *Runner) expandFields(w *syntax.Word, st *state) []string {
 	}
 	var out []string
 	for _, f := range fields {
-		out = append(out, r.glob(f)...)
+		out = append(out, r.glob(f, st.dir)...)
 	}
 	return out
 }
@@ -91,14 +91,33 @@ func wordHasQuoted(w *syntax.Word) bool {
 }
 
 // glob expands a field containing glob metacharacters; a non-matching pattern
-// stays literal (no nullglob in v0).
-func (r *Runner) glob(f string) []string {
+// stays literal (no nullglob in v0). A relative pattern is resolved against the
+// SESSION dir (dir), not the daemon process's cwd — otherwise `cd x; echo *.go`
+// would glob the wrong directory.
+func (r *Runner) glob(f, dir string) []string {
 	if !hasGlobMeta(f) {
 		return []string{f}
 	}
-	matches, err := filepath.Glob(f)
+	pattern := f
+	if !filepath.IsAbs(pattern) && dir != "" {
+		pattern = filepath.Join(dir, pattern)
+	}
+	matches, err := filepath.Glob(pattern)
 	if err != nil || len(matches) == 0 {
 		return []string{f}
+	}
+	// Present matches relative to the session dir when the pattern was relative,
+	// so `echo *.go` prints "a.go b.go" (not "/abs/dir/a.go").
+	if !filepath.IsAbs(f) && dir != "" {
+		rel := make([]string, 0, len(matches))
+		for _, m := range matches {
+			if rr, rerr := filepath.Rel(dir, m); rerr == nil {
+				rel = append(rel, rr)
+				continue
+			}
+			rel = append(rel, m)
+		}
+		return rel
 	}
 	return matches
 }
