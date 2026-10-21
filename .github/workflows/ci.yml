@@ -38,9 +38,17 @@ jobs:
       # build.sh already documents the exact recipe, so use it rather than a
       # second copy that can drift.
       - name: build the SPA into the embed path
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch main \
+          # Pin the UI to its newest RELEASE, not to main. A branch tip is
+          # not reproducible: this build would embed whatever happened to be
+          # pushed, with nothing recording which commit it was.
+          u=$(gh release view --repo easydev-org/easysh-webui --json tagName -q .tagName) \
+            || { echo "::error::easydev-org/easysh-webui has no Release to pin to"; exit 1; }
+          echo "ui=easydev-org/easysh-webui@$u"
+          git clone --depth 1 --branch "$u" \
             https://github.com/easydev-org/easysh-webui.git /tmp/webui
           cd /tmp/webui
           npm ci --no-audit --no-fund
