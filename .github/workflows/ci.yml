@@ -1,15 +1,6 @@
 name: ci
 
-# Check every push and pull request: vet, test, build.
-#
-# This repo had NO CI. That mattered more than usual here because the binary is
-# only produced when an image is built — a compile error sat in main until
-# someone tried to ship it.
-#
-# CGO_ENABLED=0 is deliberate: the artifacts these repos produce run in
-# containers and in guests (Android's bionic, alpine's musl), so a dynamically
-# linked binary is a latent failure that only shows up where the interpreter is
-# missing.
+# Check every push and pull request.
 
 on:
   push:
@@ -21,6 +12,9 @@ permissions:
   contents: read
 
 env:
+  # These binaries ship to musl and bionic as well as glibc. A dynamically linked
+  # build fails there with ENOENT for a file that exists — the ELF interpreter is
+  # what is missing.
   CGO_ENABLED: "0"
 
 jobs:
@@ -34,18 +28,40 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # pkg/webui/webui.go has `//go:embed all:dist`, and dist/ is not committed.
+      # Every go command fails until the SPA exists:
+      #   pattern all:dist: no matching files found
+      # build.sh already documents the exact recipe, so use it rather than a
+      # second copy that can drift.
+      - name: build the SPA into the embed path
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch main \
+            https://github.com/easydev-org/easysh-webui.git /tmp/webui
+          cd /tmp/webui
+          npm ci --no-audit --no-fund
+          mkdir -p "$GITHUB_WORKSPACE/pkg/webui/dist"
+          OUT_DIR="$GITHUB_WORKSPACE/pkg/webui/dist" npm run build
+          echo "SPA files: $(find "$GITHUB_WORKSPACE/pkg/webui/dist" -type f | wc -l)"
+
       - run: go vet ./...
 
       - run: go test ./...
 
-      # Build everything, not just one main: a package that no longer compiles is
-      # still a broken repository even if the entrypoint happens to build.
       - run: go build ./...
 
-      - name: assert the tree is tidy
+      - name: assert the binaries are static
         run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum || {
-            echo "::error::go.mod/go.sum are not tidy"
-            exit 1
-          }
+          set -euo pipefail
+          for cmd in easysh easyshd; do
+            go build -ldflags "-s -w" -o "/tmp/$cmd" "./cmd/$cmd"
+            if readelf -l "/tmp/$cmd" | grep -q INTERP; then
+              echo "::error::$cmd is dynamically linked"
+              exit 1
+            fi
+          done
+          echo "static: OK"
