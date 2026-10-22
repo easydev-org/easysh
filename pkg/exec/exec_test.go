@@ -38,6 +38,68 @@ func TestEcho(t *testing.T) {
 	}
 }
 
+// TestExitDoesNotPoisonSession is a regression test for a bug that made a whole
+// worker useless after one job.
+//
+// The Runner is a session: it deliberately outlives a Run so `cd`, `export` and
+// function definitions persist. But `exit`, `return`, `break` and `continue` are
+// per-run control flow, and their sentinels were only ever set, never cleared.
+// One job that ran `exit 3` therefore left exiting == true for the lifetime of
+// the process, and every later job returned at the top of runStmts having
+// executed nothing at all. From outside the daemon looked healthy — it accepted
+// job ids — while the shell silently did nothing, and only a restart recovered
+// it. That is exactly the failure this test pins down.
+func TestExitDoesNotPoisonSession(t *testing.T) {
+	var out bytes.Buffer
+	r := New(Options{
+		Dir:     t.TempDir(),
+		Env:     []string{"HOME=/tmp"},
+		Stdin:   strings.NewReader(""),
+		Stdout:  &out,
+		Stderr:  &out,
+		Capture: true,
+	})
+
+	// 1. `exit` with a code reports that code...
+	res, err := r.Run(context.Background(), `echo before; exit 3`)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if res.ExitCode != 3 {
+		t.Fatalf("first run exit code = %d, want 3", res.ExitCode)
+	}
+
+	// 2. ...and the NEXT run on the same session still executes commands.
+	// Before the fix this produced empty output and code 3, because runStmts
+	// returned the stale retCode before running anything.
+	out.Reset()
+	res, err = r.Run(context.Background(), `echo after`)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if out.String() != "after\n" {
+		t.Fatalf("second run output = %q, want %q (session was poisoned by exit)",
+			out.String(), "after\n")
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("second run exit code = %d, want 0", res.ExitCode)
+	}
+
+	// 3. The same must hold for `return` inside a function call and for a
+	//    `break` that never left a loop, which set the same kind of sentinel.
+	out.Reset()
+	if _, err := r.Run(context.Background(), `f() { return 4; }; f`); err != nil {
+		t.Fatalf("return run: %v", err)
+	}
+	out.Reset()
+	if _, err := r.Run(context.Background(), `echo still-alive`); err != nil {
+		t.Fatalf("after return: %v", err)
+	}
+	if out.String() != "still-alive\n" {
+		t.Fatalf("after return output = %q, want %q", out.String(), "still-alive\n")
+	}
+}
+
 func TestVarExpand(t *testing.T) {
 	out, _, _ := run(t, "let x = hi\necho \"$x there\"")
 	if out != "hi there\n" {

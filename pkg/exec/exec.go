@@ -163,6 +163,19 @@ func (r *Runner) RunWithIO(ctx context.Context, src string, sink flow.Sink, stdi
 	// Each run gets a fresh flow registry: a job's graph must contain only that
 	// job's flows, not every flow the session has ever produced.
 	r.reg = flow.NewRegistry()
+	// Reset the per-run control flags. The Runner is a SESSION: it outlives a
+	// single Run so `cd`, `export` and function definitions stick. But `exit`,
+	// `return`, `break` and `continue` are per-run control flow, and their
+	// sentinels were only ever SET (builtin.go) and CHECKED (runStmts), never
+	// cleared. So one job that ran `exit 3` left r.exiting == true forever, and
+	// every later job on the same worker returned at the top of runStmts without
+	// executing a single command: the daemon looked alive, the shell looked
+	// broken, and only a worker restart recovered it.
+	r.exiting = false
+	r.returning = false
+	r.retCode = 0
+	r.loopCtl = ""
+	r.iterStack = nil
 	if r.opts.OnRegistry != nil {
 		r.opts.OnRegistry(r.reg)
 	}
